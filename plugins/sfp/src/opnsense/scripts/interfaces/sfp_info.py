@@ -70,6 +70,25 @@ def _dbm(mw):
 def media_type(a0):
     """Best-effort media/compliance string from connector + compliance codes."""
     conn = a0[2]
+    # Copper RJ45 modules embed a PHY and report their real link type over MDIO,
+    # not in the SFF optical/cable compliance bytes — which they routinely set
+    # spuriously (e.g. FS SFP-10G-T sets the passive-DAC bit, Ubiquiti
+    # UACC-CM-RJ45-MG sets the 10GBASE-SR bit). Classify these by the declared
+    # max signaling rate (byte 12, units of 100 Mbps) instead; the PHY
+    # negotiates the actual mode (2.5G/5G/...) and the kernel logs it separately.
+    if conn == 0x22:               # RJ45
+        rate = a0[12] * 100        # Mbps; module's maximum rate
+        if rate >= 10000:
+            return "10GBASE-T"
+        if rate >= 5000:
+            return "5GBASE-T"
+        if rate >= 2500:
+            return "2.5GBASE-T"
+        if rate >= 1000:
+            return "1000BASE-T"
+        if rate >= 100:
+            return "100BASE-TX"
+        return "10GBASE-T"         # rate undeclared: default to the cage's max
     codes = []
     eth10g = a0[3]
     if eth10g & 0x10:
@@ -92,8 +111,6 @@ def media_type(a0):
         codes.append("10GBASE-CR (passive)")
     if cable & 0x08:
         codes.append("10GBASE-CR (active)")
-    if not codes and conn == 0x22:
-        codes.append("10GBASE-T")
     return ", ".join(codes) if codes else "Unknown"
 
 
@@ -202,11 +219,36 @@ def read_eeprom(ifname):
     return raw[:256], raw[256:512]
 
 
+def read_phy_modes(ifname):
+    """Supported copper PHY rates (e.g. "1G, 2.5G, 5G, 10G"), or "" if N/A.
+
+    Sourced from the dtsec driver, which reads the module PHY's MDIO ability
+    registers — the SFF EEPROM cannot enumerate negotiable rates. Empty for
+    fiber/DAC modules and 10G-only copper without multigig support.
+    """
+    m = re.fullmatch(r"dtsec(\d+)", ifname or "")
+    if not m:
+        return ""
+    oid = "dev.dtsec.%s.sfp_phy_modes" % m.group(1)
+    try:
+        return subprocess.run(
+            ["/sbin/sysctl", "-nq", oid],
+            capture_output=True, text=True
+        ).stdout.strip()
+    except OSError:
+        return ""
+
+
 def info_for(ifname):
     pages = read_eeprom(ifname)
     if pages is None:
         return {}
-    return decode(pages[0], pages[1])
+    info = decode(pages[0], pages[1])
+    if info:
+        modes = read_phy_modes(ifname)
+        if modes:
+            info["Supported Rates"] = modes
+    return info
 
 
 if __name__ == "__main__":
