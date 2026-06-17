@@ -291,6 +291,7 @@ image:
 			echo ">>> Applying patch: $(basename ${p})"
 			patch -d "${COREDIR}" -p1 -V none < "${p}"
 		done
+		git -C "${COREDIR}" add -f src/etc/pkg/
 		git -C "${COREDIR}" commit -a -m "Mono Gateway customizations"
 	fi
 	cd ${SRCDIR} && git checkout ${OPS_BRANCH} && git pull || echo "    git pull skipped (NFS or no remote)"
