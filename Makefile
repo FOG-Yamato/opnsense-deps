@@ -27,6 +27,7 @@ VENDORDIR?=	${OPSDIR}/_vendor
 # Source and tooling paths (standard OPNsense layout)
 SRCDIR?=	/usr/src
 TOOLSDIR?=	/usr/tools
+COREDIR?=	/usr/core
 SYSROOT?=	/usr/obj${SRCDIR}/arm64.aarch64/tmp
 KERNBUILDDIR?=	/usr/obj${SRCDIR}/arm64.aarch64/sys/GATEWAY
 
@@ -220,6 +221,7 @@ package: all
 	@mkdir -p ${PKG_STAGEDIR}/etc/fmc/config
 	@mkdir -p ${PKG_STAGEDIR}/usr/local/etc/rc.d
 	@mkdir -p ${PKG_STAGEDIR}/usr/local/etc/rc.syshook.d/early
+	@mkdir -p ${PKG_STAGEDIR}/usr/local/etc/rc.syshook.d/stop
 	# Kernel modules
 	install -m 644 ${DISTDIR}/cdx.ko ${PKG_STAGEDIR}/boot/modules/
 	install -m 644 ${DISTDIR}/fci.ko ${PKG_STAGEDIR}/boot/modules/
@@ -251,6 +253,8 @@ package: all
 	install -m 755 ${PKG_RCDDIR}/mwifiex_uap ${PKG_STAGEDIR}/usr/local/etc/rc.d/
 	# rc.syshook early scripts
 	install -m 755 ${PKG_RCDDIR}/01-mono-modules ${PKG_STAGEDIR}/usr/local/etc/rc.syshook.d/early/
+	# rc.syshook stop scripts
+	install -m 755 ${PKG_RCDDIR}/20-kernel-update ${PKG_STAGEDIR}/usr/local/etc/rc.syshook.d/stop/
 	# OPNsense plugin files (hwmon dashboard widget)
 	cp -R ${OPSDIR}/plugins/hwmon/src/opnsense/ ${PKG_STAGEDIR}/usr/local/opnsense/
 	chmod 755 ${PKG_STAGEDIR}/usr/local/opnsense/scripts/hwmon/sensors.py
@@ -282,6 +286,17 @@ image:
 	@test -d ${SRCDIR}/.git || git clone https://github.com/we-are-mono/opnsense-src.git -b ${OPS_BRANCH} ${SRCDIR}
 	@test -d ${TOOLSDIR}/.git || git clone https://github.com/opnsense/tools.git ${TOOLSDIR}
 	@cp -n ${OPSDIR}/config/GATEWAY.conf ${TOOLSDIR}/device/ 2>/dev/null || true
+	# --- Apply opnsense-core patches ---
+	local PATCHDIR="${OPSDIR}/patches"
+	if [ -d "${PATCHDIR}" ]; then
+		for p in "${PATCHDIR}"/*.patch; do
+			[ -f "${p}" ] || continue
+			echo ">>> Applying patch: $(basename ${p})"
+			patch -d "${COREDIR}" -p1 -V none < "${p}"
+		done
+		git -C "${COREDIR}" add -f src/etc/pkg/
+		git -C "${COREDIR}" commit -a -m "Mono Gateway customizations"
+	fi
 	cd ${SRCDIR} && git checkout ${OPS_BRANCH} && git pull || echo "    git pull skipped (NFS or no remote)"
 	@echo "==> Step 2: Building kernel (clean)"
 	rm -f ${SETSDIR}/kernel-*-GATEWAY.txz
